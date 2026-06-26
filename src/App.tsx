@@ -9,7 +9,6 @@ import {
   Grid,
   FileSpreadsheet,
   AlertCircle,
-  Sparkles,
   Terminal,
   Check,
 } from 'lucide-react';
@@ -468,11 +467,24 @@ function App() {
       <header style={headerStyle} className="glass-panel">
         <div style={headerLeftStyle}>
           <div style={logoWrapperStyle}>
-            <Sparkles size={22} color="white" />
+            <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ width: '22px', height: '22px' }}>
+              <defs>
+                <linearGradient id="headerRLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#2563EB"/>
+                  <stop offset="100%" stopColor="#3B82F6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="8.75" cy="24" r="3" fill="url(#headerRLogoGradient)" stroke="#FFFFFF" strokeWidth="1"/>
+              <path d="M8.75 8H17C20.866 8 24 11.134 24 15C24 18.866 20.866 22 17 22H8.75V18.5H17C18.933 18.5 20.5 16.933 20.5 15C20.5 13.067 18.933 11.5 17 11.5H8.75V8Z" fill="url(#headerRLogoGradient)"/>
+              <rect x="7" y="8" width="3.5" height="16" rx="1.75" fill="url(#headerRLogoGradient)"/>
+              <path d="M15.5 20.5 L20.5 27" stroke="url(#headerRLogoGradient)" strokeWidth="3.5" strokeLinecap="round"/>
+              <path d="M21.5 21C19.5 21 18 22.5 18 24.5C18 27.5 21.5 31 21.5 31C21.5 31 25 27.5 25 24.5C25 22.5 23.5 21 21.5 21Z" fill="url(#headerRLogoGradient)"/>
+              <circle cx="21.5" cy="24.5" r="1.5" fill="#FFFFFF"/>
+            </svg>
           </div>
           <div>
-            <h1 style={logoTextStyle}>Smart Route <span style={{ color: 'var(--primary)' }}>Validator</span></h1>
-            <span style={logoSubtitleStyle}>Enterprise Route Sheet Generator</span>
+            <div style={logoTextStyle}>RouteSync <span style={{ color: 'var(--primary)' }}>AI</span></div>
+            <span style={logoSubtitleStyle}>Validate. Match. Generate.</span>
           </div>
         </div>
 
@@ -485,9 +497,14 @@ function App() {
       <main className="container animate-fade-in" style={mainStyle}>
         {/* Banner Area */}
         <section style={bannerSectionStyle}>
-          <h2 style={bannerHeadingStyle}>Smart Route Validation & Route Sheet Generator</h2>
+          <h1 style={bannerHeadingStyle}>RouteSync AI</h1>
+          <p style={taglineStyle}>
+            <span style={{ color: '#3b82f6' }}>Validate.</span>{' '}
+            <span style={{ color: '#10b981' }}>Match.</span>{' '}
+            <span style={{ color: '#f97316' }}>Generate.</span>
+          </p>
           <p style={bannerSubheadingStyle}>
-            Upload Master Data and Route List spreadsheets to automatically validate commuter names, verify reference codes, detect landmark mismatches, and download a standardized Route Sheet.
+            Upload your Master Data and Route List to intelligently validate commuter records, detect reference code and landmark mismatches, resolve duplicate commuters, and generate a standardized Route Sheet in a single click.
           </p>
         </section>
 
@@ -939,7 +956,7 @@ const headerLeftStyle: React.CSSProperties = {
 };
 
 const logoWrapperStyle: React.CSSProperties = {
-  backgroundColor: 'var(--primary)',
+  backgroundColor: 'var(--primary-glow)',
   width: '40px',
   height: '40px',
   borderRadius: '10px',
@@ -994,12 +1011,24 @@ const bannerSectionStyle: React.CSSProperties = {
 };
 
 const bannerHeadingStyle: React.CSSProperties = {
-  fontSize: '2.2rem',
-  lineHeight: 1.2,
+  fontSize: '3rem',
+  lineHeight: 1.1,
   fontWeight: 800,
-  marginBottom: '12px',
+  marginBottom: '8px',
   fontFamily: 'var(--font-heading)',
   letterSpacing: '-0.03em',
+};
+
+const taglineStyle: React.CSSProperties = {
+  fontSize: '1.3rem',
+  fontWeight: 700,
+  marginBottom: '20px',
+  fontFamily: 'var(--font-heading)',
+  letterSpacing: '0.02em',
+  display: 'flex',
+  justifyContent: 'center',
+  flexWrap: 'wrap',
+  gap: '8px',
 };
 
 const bannerSubheadingStyle: React.CSSProperties = {
