@@ -219,7 +219,14 @@ ctx.onmessage = (event: MessageEvent<any>) => {
       });
 
     } else if (type === 'COMPARE_FILES') {
-      const { masterMappings, routeMappings } = payload;
+      const { masterMappings, routeMappings, settings } = payload;
+      const autoGenerateStops = settings?.autoGenerateStops !== false;
+      const autoGenerateTimes = settings?.autoGenerateTimes !== false;
+      const tripStartTime = settings?.tripStartTime || '08:00';
+      const tripEndTime = settings?.tripEndTime || '09:00';
+
+      const comparisonLogs: string[] = [];
+      comparisonLogs.push(`Comparative validator started. Time window settings: ${tripStartTime} to ${tripEndTime}.`);
 
       // Mapped keys for Master File
       const mNameKey = masterMappings?.CommuterName || '';
@@ -241,7 +248,6 @@ ctx.onmessage = (event: MessageEvent<any>) => {
       let duplicateNames = 0;
       let errorsFound = 0;
 
-      const comparisonLogs: string[] = [];
       const routeSheetData: Record<string, unknown>[] = [];
       const errorReportData: Record<string, unknown>[] = [];
 
@@ -249,6 +255,30 @@ ctx.onmessage = (event: MessageEvent<any>) => {
         if (!val) return '';
         return val.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
       };
+
+      const getMode = (arr: string[]): string => {
+        const counts: Record<string, number> = {};
+        let maxCount = 0;
+        let mode = '';
+        arr.forEach((val) => {
+          const v = (val || '').trim();
+          if (!v) return;
+          counts[v] = (counts[v] || 0) + 1;
+          if (counts[v] > maxCount) {
+            maxCount = counts[v];
+            mode = v;
+          }
+        });
+        return mode;
+      };
+
+      interface AuditLogEntry {
+        operation: string;
+        status: 'Corrected' | 'Generated' | 'Duplicate Commuter' | 'Commuter Not Found' | 'Unresolved';
+        original: string;
+        corrected: string;
+        suggestedFix: string;
+      }
 
       interface ProcessedRow {
         originalIndex: number;
@@ -265,6 +295,8 @@ ctx.onmessage = (event: MessageEvent<any>) => {
         errorsList: string[];
         reasonsList: string[];
         confidence: number;
+        rowAuditLog: AuditLogEntry[];
+        finalLandmark: string;
       }
 
       const processedRows: ProcessedRow[] = [];
@@ -295,6 +327,8 @@ ctx.onmessage = (event: MessageEvent<any>) => {
         let confidence = 0;
         let logMessage = '';
         let matchError = '';
+        let isDuplicateResolved = false;
+        let isRefCodeRecovered = false;
 
         // Count missing ref codes in Route List
         if (!normRef) {
@@ -335,6 +369,7 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                 if (filtered.length === 1) {
                   matchedMasterRow = filtered[0];
                   confidence = 75;
+                  isDuplicateResolved = true;
                 } else if (filtered.length > 1) {
                   candidates = filtered;
                 }
@@ -348,6 +383,7 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                   if (filtered.length === 1) {
                     matchedMasterRow = filtered[0];
                     confidence = 65;
+                    isDuplicateResolved = true;
                   } else if (filtered.length > 1) {
                     candidates = filtered;
                   }
@@ -362,6 +398,7 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                   if (filtered.length === 1) {
                     matchedMasterRow = filtered[0];
                     confidence = 55;
+                    isDuplicateResolved = true;
                   } else if (filtered.length > 1) {
                     candidates = filtered;
                   }
@@ -390,6 +427,7 @@ ctx.onmessage = (event: MessageEvent<any>) => {
             if (nameMatches.length === 1) {
               matchedMasterRow = nameMatches[0];
               confidence = 85;
+              isRefCodeRecovered = true;
               logMessage = `Row ${index + 1}: Matched '${normName}' using Commuter Name. Confidence: 85%`;
             } else if (nameMatches.length > 1) {
               let candidates = nameMatches;
@@ -401,6 +439,8 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                 if (filtered.length === 1) {
                   matchedMasterRow = filtered[0];
                   confidence = 75;
+                  isRefCodeRecovered = true;
+                  isDuplicateResolved = true;
                 } else if (filtered.length > 1) {
                   candidates = filtered;
                 }
@@ -414,6 +454,8 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                   if (filtered.length === 1) {
                     matchedMasterRow = filtered[0];
                     confidence = 65;
+                    isRefCodeRecovered = true;
+                    isDuplicateResolved = true;
                   } else if (filtered.length > 1) {
                     candidates = filtered;
                   }
@@ -428,6 +470,8 @@ ctx.onmessage = (event: MessageEvent<any>) => {
                   if (filtered.length === 1) {
                     matchedMasterRow = filtered[0];
                     confidence = 55;
+                    isRefCodeRecovered = true;
+                    isDuplicateResolved = true;
                   } else if (filtered.length > 1) {
                     candidates = filtered;
                   }
@@ -456,39 +500,47 @@ ctx.onmessage = (event: MessageEvent<any>) => {
         let status: 'Valid' | 'Error' = 'Valid';
         const errorsList: string[] = [];
         const reasonsList: string[] = [];
-
-        // Check for general Route list issues
-        if (!routeNo) {
-          errorsList.push('Route Missing');
-          reasonsList.push('Route Missing');
-          status = 'Error';
-        }
-        if (!routeStopNo) {
-          errorsList.push('Invalid Stop Number');
-          reasonsList.push('Invalid Stop Number');
-          status = 'Error';
-        }
-        if (!routeReportingTime) {
-          errorsList.push('Invalid Reporting Time');
-          reasonsList.push('Invalid Reporting Time');
-          status = 'Error';
-        }
+        const rowAuditLog: AuditLogEntry[] = [];
 
         // Check match results
         if (matchError) {
           errorsList.push(matchError);
           reasonsList.push(matchError);
           status = 'Error';
+          errorsFound++;
           if (matchError === 'Duplicate Commuter') {
             duplicateNames++;
+            rowAuditLog.push({
+              operation: 'Requires Manual Review: Duplicate Commuter Conflict',
+              status: 'Duplicate Commuter',
+              original: name || '[Blank]',
+              corrected: '',
+              suggestedFix: 'Provide unique Father/Mother Mobile or Parent Email in Master and Route List'
+            });
+          } else {
+            rowAuditLog.push({
+              operation: 'Requires Manual Review: Commuter Not Found',
+              status: 'Commuter Not Found',
+              original: `Name: "${name || '[Blank]'}"; Ref Code: "${refCode || '[Blank]'}"`,
+              corrected: '',
+              suggestedFix: 'Verify commuter name and reference code match Master Data'
+            });
           }
         }
 
-        // If Ref Code is missing in Route list but successfully matched by name
-        if (!normRef && matchedMasterRow) {
-          errorsList.push('Missing Ref Code');
-          reasonsList.push('Missing Ref Code');
-          // Warning only, does not set status to 'Error' since commuter is successfully matched
+        // Check for Route Number missing
+        if (!routeNo) {
+          errorsList.push('Route Missing');
+          reasonsList.push('Route Missing');
+          status = 'Error';
+          errorsFound++;
+          rowAuditLog.push({
+            operation: 'Could Not Process: Route Number Missing',
+            status: 'Unresolved',
+            original: '',
+            corrected: '',
+            suggestedFix: 'Assign a valid Route Number in Route List'
+          });
         }
 
         if (matchedMasterRow) {
@@ -501,7 +553,27 @@ ctx.onmessage = (event: MessageEvent<any>) => {
           masterNameVal = getRowValue(matchedMasterRow, mNameKey, mNameKeyMatches).trim();
           masterLandmarkVal = getRowValue(matchedMasterRow, mLandmarkKey, mLandmarkMatches).trim();
 
-          const normMasterLandmark = normalizeLandmark(masterLandmarkVal);
+          // Recovered Ref Code from Master Data
+          if (isRefCodeRecovered) {
+            rowAuditLog.push({
+              operation: 'Recovered Ref Code from Master Data',
+              status: 'Corrected',
+              original: refCode || '[Blank]',
+              corrected: masterRefCodeVal,
+              suggestedFix: ''
+            });
+          }
+
+          // Resolved Duplicate Name
+          if (isDuplicateResolved) {
+            rowAuditLog.push({
+              operation: 'Resolved Duplicate Commuter via Parent Contact',
+              status: 'Corrected',
+              original: name,
+              corrected: `${masterNameVal} (${masterRefCodeVal})`,
+              suggestedFix: ''
+            });
+          }
 
           // Check if parent contact details are completely missing
           const fMobile = getFatherMobile(matchedMasterRow);
@@ -510,26 +582,38 @@ ctx.onmessage = (event: MessageEvent<any>) => {
           if (!fMobile && !mMobile && !pEmail) {
             errorsList.push('Missing Parent Contact');
             reasonsList.push('Missing Parent Contact');
-          }
-
-          // Landmark Verification
-          const simplifiedRoute = simplifyLandmark(normLandmark);
-          const simplifiedMaster = simplifyLandmark(normMasterLandmark);
-
-          if (simplifiedRoute === simplifiedMaster) {
-            landmarkCorrect++;
-          } else {
-            landmarkChanged++;
-            errorsList.push('Landmark Mismatch');
-            reasonsList.push('Landmark Mismatch');
-            status = 'Error';
+            rowAuditLog.push({
+              operation: 'Missing Parent Contact',
+              status: 'Corrected', // warning only, doesn't block route sheet inclusion
+              original: '',
+              corrected: '',
+              suggestedFix: 'Provide Father/Mother Mobile or Parent Email in Master Data'
+            });
           }
         } else {
           landmarkMissing++;
         }
 
-        if (status === 'Error') {
-          errorsFound++;
+        let finalLandmark = routeLandmark;
+        if (matchedMasterRow) {
+          const normMasterLandmark = normalizeLandmark(masterLandmarkVal);
+          const simplifiedRoute = simplifyLandmark(normLandmark);
+          const simplifiedMaster = simplifyLandmark(normMasterLandmark);
+
+          if (simplifiedRoute === simplifiedMaster) {
+            landmarkCorrect++;
+            finalLandmark = masterLandmarkVal; // standardize to master casing
+          } else {
+            landmarkChanged++;
+            finalLandmark = masterLandmarkVal; // overwrite with Master Data landmark!
+            rowAuditLog.push({
+              operation: 'Corrected Landmark Mismatch to Master Data',
+              status: 'Corrected',
+              original: routeLandmark || '[Blank]',
+              corrected: masterLandmarkVal,
+              suggestedFix: ''
+            });
+          }
         }
 
         comparisonLogs.push(logMessage || `Row ${index + 1}: Match failed.`);
@@ -548,75 +632,147 @@ ctx.onmessage = (event: MessageEvent<any>) => {
           status,
           errorsList,
           reasonsList,
-          confidence
+          confidence,
+          rowAuditLog,
+          finalLandmark
         });
       });
 
-      // Route Consistency Checks (Step 5)
-      const routeGroups: Record<string, typeof processedRows> = {};
+      // Group Valid rows by Route for stop/time consistency and generation
+      const routeGroups: Record<string, ProcessedRow[]> = {};
       processedRows.forEach((row) => {
-        if (row.status === 'Valid' && row.routeNo && row.routeLandmark) {
-          const key = `${row.routeNo.toLowerCase()}|${simplifyLandmark(row.routeLandmark)}`;
-          if (!routeGroups[key]) {
-            routeGroups[key] = [];
+        if (row.status === 'Valid' && row.routeNo) {
+          const rNo = row.routeNo.toLowerCase().trim();
+          if (!routeGroups[rNo]) {
+            routeGroups[rNo] = [];
           }
-          routeGroups[key].push(row);
+          routeGroups[rNo].push(row);
         }
       });
 
-      Object.keys(routeGroups).forEach((key) => {
-        const group = routeGroups[key];
-        if (group.length <= 1) return;
+      Object.keys(routeGroups).forEach((rNo) => {
+        const group = routeGroups[rNo];
+        if (group.length === 0) return;
 
-        // Modes counts
-        const stopCounts = new Map<string, number>();
-        const timeCounts = new Map<string, number>();
-
-        group.forEach((r) => {
-          stopCounts.set(r.routeStopNo, (stopCounts.get(r.routeStopNo) || 0) + 1);
-          timeCounts.set(r.routeReportingTime, (timeCounts.get(r.routeReportingTime) || 0) + 1);
+        // Group rows in this route by finalLandmark
+        const landmarkGroups: Record<string, ProcessedRow[]> = {};
+        group.forEach((row) => {
+          const key = simplifyLandmark(row.finalLandmark);
+          if (!landmarkGroups[key]) {
+            landmarkGroups[key] = [];
+          }
+          landmarkGroups[key].push(row);
         });
 
-        let maxStopCount = 0;
-        let expectedStop = '';
-        stopCounts.forEach((count, val) => {
-          if (count > maxStopCount) {
-            maxStopCount = count;
-            expectedStop = val;
-          }
-        });
+        // 1. Stop Number Generation or Standardization
+        const stopNumbersMissing = group.every(row => !row.routeStopNo) || autoGenerateStops;
 
-        let maxTimeCount = 0;
-        let expectedTime = '';
-        timeCounts.forEach((count, val) => {
-          if (count > maxTimeCount) {
-            maxTimeCount = count;
-            expectedTime = val;
-          }
-        });
+        if (stopNumbersMissing) {
+          // Sort landmark groups by average original index to maintain supervisor sequence
+          const sortedLandmarks = Object.keys(landmarkGroups).map(key => ({
+            key,
+            rows: landmarkGroups[key],
+            avgIndex: landmarkGroups[key].reduce((sum, r) => sum + r.originalIndex, 0) / landmarkGroups[key].length
+          }));
+          sortedLandmarks.sort((a, b) => a.avgIndex - b.avgIndex);
 
-        group.forEach((r) => {
-          const isStopInconsistent = (maxStopCount === 1 && group.length > 1) || (r.routeStopNo !== expectedStop);
-          const isTimeInconsistent = (maxTimeCount === 1 && group.length > 1) || (r.routeReportingTime !== expectedTime);
+          // Assign sequential stop numbers
+          sortedLandmarks.forEach((landmarkItem, lIdx) => {
+            const generatedStop = String(lIdx + 1);
+            landmarkItem.rows.forEach((row) => {
+              const origStop = row.routeStopNo;
+              row.routeStopNo = generatedStop;
+              row.rowAuditLog.push({
+                operation: 'Generated Stop Number',
+                status: 'Generated',
+                original: origStop || '[Blank]',
+                corrected: generatedStop,
+                suggestedFix: ''
+              });
+            });
+          });
+        } else {
+          // Standardize inconsistent stop numbers to the mode majority
+          Object.keys(landmarkGroups).forEach((key) => {
+            const landRows = landmarkGroups[key];
+            const stopNums = landRows.map(r => r.routeStopNo).filter(Boolean);
+            const modeStop = getMode(stopNums) || '1';
 
-          if (isStopInconsistent) {
-            r.errorsList.push('Inconsistent Stop Number');
-            r.reasonsList.push('Inconsistent Stop Number');
-            if (r.status !== 'Error') {
-              r.status = 'Error';
-              errorsFound++;
-            }
-          }
+            landRows.forEach((row) => {
+              const origStop = row.routeStopNo;
+              if (origStop !== modeStop) {
+                row.routeStopNo = modeStop;
+                row.rowAuditLog.push({
+                  operation: 'Standardized Inconsistent Stop Number to Mode',
+                  status: 'Corrected',
+                  original: origStop || '[Blank]',
+                  corrected: modeStop,
+                  suggestedFix: ''
+                });
+              }
+            });
+          });
+        }
 
-          if (isTimeInconsistent) {
-            r.errorsList.push('Inconsistent Reporting Time');
-            r.reasonsList.push('Inconsistent Reporting Time');
-            if (r.status !== 'Error') {
-              r.status = 'Error';
-              errorsFound++;
-            }
-          }
-        });
+        // 2. Reporting Time Generation or Standardization
+        const reportingTimesMissing = group.every(row => !row.routeReportingTime) || autoGenerateTimes;
+
+        if (reportingTimesMissing) {
+          // Sort landmark groups by stop number (numerical sort)
+          const sortedLandmarks = Object.keys(landmarkGroups).map(key => ({
+            key,
+            rows: landmarkGroups[key],
+            stopNum: parseInt(landmarkGroups[key][0].routeStopNo) || 999
+          }));
+          sortedLandmarks.sort((a, b) => a.stopNum - b.stopNum);
+
+          const addMinutes = (timeStr: string, minutes: number): string => {
+            const parts = timeStr.split(':');
+            let hours = parseInt(parts[0]) || 8;
+            let mins = parseInt(parts[1]) || 0;
+            mins += minutes;
+            hours += Math.floor(mins / 60);
+            hours = hours % 24;
+            mins = mins % 60;
+            return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+          };
+
+          sortedLandmarks.forEach((landmarkItem, lIdx) => {
+            const generatedTime = addMinutes(tripStartTime, lIdx * 2);
+            landmarkItem.rows.forEach((row) => {
+              const origTime = row.routeReportingTime;
+              row.routeReportingTime = generatedTime;
+              row.rowAuditLog.push({
+                operation: 'Generated Reporting Time',
+                status: 'Generated',
+                original: origTime || '[Blank]',
+                corrected: generatedTime,
+                suggestedFix: ''
+              });
+            });
+          });
+        } else {
+          // Standardize inconsistent reporting times to the mode majority
+          Object.keys(landmarkGroups).forEach((key) => {
+            const landRows = landmarkGroups[key];
+            const times = landRows.map(r => r.routeReportingTime).filter(Boolean);
+            const modeTime = getMode(times) || tripStartTime;
+
+            landRows.forEach((row) => {
+              const origTime = row.routeReportingTime;
+              if (origTime !== modeTime) {
+                row.routeReportingTime = modeTime;
+                row.rowAuditLog.push({
+                  operation: 'Standardized Inconsistent Reporting Time to Mode',
+                  status: 'Corrected',
+                  original: origTime || '[Blank]',
+                  corrected: modeTime,
+                  suggestedFix: ''
+                });
+              }
+            });
+          });
+        }
       });
 
       // Filter and Sort Valid Rows for the Route Sheet
@@ -633,9 +789,9 @@ ctx.onmessage = (event: MessageEvent<any>) => {
 
       validRows.forEach((row) => {
         routeSheetData.push({
-          'CommuterRefCode': row.masterRefCode,
+          'Commuter Ref Code': row.masterRefCode,
           'Commuter Name': row.masterName,
-          'Landmark Name': row.masterLandmark,
+          'Landmark Name': row.finalLandmark,
           'Route No': row.routeNo,
           'Stop No': row.routeStopNo,
           'Route Type': 'Bus',
@@ -643,40 +799,19 @@ ctx.onmessage = (event: MessageEvent<any>) => {
         });
       });
 
-      // Build Error Report entries
+      // Build audit-centric Validation Report rows
       processedRows.forEach((row) => {
-        row.reasonsList.forEach((reason) => {
-          let suggestedFix = '';
-          if (reason === 'Commuter Not Found') {
-            suggestedFix = 'Verify commuter name and reference code match Master Data';
-          } else if (reason === 'Duplicate Commuter') {
-            suggestedFix = 'Provide unique Father/Mother Mobile or Parent Email in Master and Route List';
-          } else if (reason === 'Landmark Mismatch') {
-            suggestedFix = `Verify and align Landmark (Expected: "${row.masterLandmark}", Actual: "${row.routeLandmark}")`;
-          } else if (reason === 'Missing Ref Code') {
-            suggestedFix = 'Provide Commuter Reference Code in Route List';
-          } else if (reason === 'Route Missing') {
-            suggestedFix = 'Assign a valid Route Number in Route List';
-          } else if (reason === 'Invalid Stop Number') {
-            suggestedFix = 'Provide a valid Stop Number in Route List';
-          } else if (reason === 'Invalid Reporting Time') {
-            suggestedFix = 'Provide a valid Reporting Time (HH:MM) in Route List';
-          } else if (reason === 'Missing Parent Contact') {
-            suggestedFix = 'Provide Father/Mother Mobile or Parent Email in Master Data';
-          } else if (reason === 'Inconsistent Stop Number') {
-            suggestedFix = 'Align Stop Number for same Route and Landmark';
-          } else if (reason === 'Inconsistent Reporting Time') {
-            suggestedFix = 'Align Reporting Time for same Route and Landmark';
-          } else {
-            suggestedFix = 'Verify record data details';
-          }
-
+        row.rowAuditLog.forEach((logEntry) => {
           errorReportData.push({
             'Row Number': row.originalIndex + 2,
             'Commuter Name': row.name,
             'Ref Code': row.refCode,
-            'Reason': reason,
-            'Suggested Fix': suggestedFix
+            'Route No': row.routeNo,
+            'Status': logEntry.status,
+            'Operation': logEntry.operation,
+            'Original Value': logEntry.original,
+            'Corrected/Generated Value': logEntry.corrected,
+            'Details/Suggested Fix': logEntry.suggestedFix
           });
         });
       });
@@ -688,19 +823,44 @@ ctx.onmessage = (event: MessageEvent<any>) => {
 
       // Generate Route Sheet workbook
       const routeWorkbook = XLSX.utils.book_new();
-      const routeWorksheet = XLSX.utils.json_to_sheet(routeSheetData);
+      const routeWorksheet = XLSX.utils.json_to_sheet(routeSheetData, {
+        header: [
+          'Commuter Ref Code',
+          'Commuter Name',
+          'Landmark Name',
+          'Route No',
+          'Stop No',
+          'Route Type',
+          'Reporting Time'
+        ]
+      });
       XLSX.utils.book_append_sheet(routeWorkbook, routeWorksheet, 'Route Sheet');
-      const routeBuffer = XLSX.write(routeWorkbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+      const routeOutput = XLSX.write(routeWorkbook, { bookType: 'xlsx', type: 'array' });
+      const routeBuffer = new Uint8Array(routeOutput).buffer;
 
-      // Generate Error Report workbook
+      // Generate Validation Report workbook
       const errorWorkbook = XLSX.utils.book_new();
       const errorWorksheet = XLSX.utils.json_to_sheet(
         errorReportData.length > 0
           ? errorReportData
-          : [{ 'Message': 'No validation errors or landmark mismatches found in route sheet list.' }]
+          : [{ 'Message': 'No corrections, generations, or unresolved errors were recorded.' }],
+        {
+          header: [
+            'Row Number',
+            'Commuter Name',
+            'Ref Code',
+            'Route No',
+            'Status',
+            'Operation',
+            'Original Value',
+            'Corrected/Generated Value',
+            'Details/Suggested Fix'
+          ]
+        }
       );
-      XLSX.utils.book_append_sheet(errorWorkbook, errorWorksheet, 'Anomalies Report');
-      const errorBuffer = XLSX.write(errorWorkbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+      XLSX.utils.book_append_sheet(errorWorkbook, errorWorksheet, 'Validation Report');
+      const errorOutput = XLSX.write(errorWorkbook, { bookType: 'xlsx', type: 'array' });
+      const errorBuffer = new Uint8Array(errorOutput).buffer;
 
       // Send buffers and results back to main thread using Transferables
       ctx.postMessage(

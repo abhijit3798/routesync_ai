@@ -68,27 +68,59 @@ export const detectColumnMappings = (
   sampleRows: Record<string, unknown>[]
 ): Record<string, string> => {
   const mappings: Record<string, string> = {};
+  const mappedSheetColumns = new Set<string>();
   logger.info(`Starting intelligent column detection across headers: ${sheetColumns.join(', ')}`);
 
+  // Step 1: Exact matches first
   SYSTEM_COLUMNS.forEach((sysCol) => {
-    // 1. Try matching aliases
-    let matchedColumn = sheetColumns.find((sheetCol) => {
+    const matchedColumn = sheetColumns.find((sheetCol) => {
+      if (mappedSheetColumns.has(sheetCol)) return false;
       const normalizedSheetCol = normalizeHeader(sheetCol);
       return sysCol.aliases.some((alias) => {
         const normalizedAlias = normalizeHeader(alias);
-        // Direct match or contains
-        return normalizedSheetCol === normalizedAlias || normalizedSheetCol.includes(normalizedAlias);
+        return normalizedSheetCol === normalizedAlias;
       });
     });
 
-    // 2. If alias match fails and pattern exists, test sample data
+    if (matchedColumn) {
+      mappings[sysCol.key] = matchedColumn;
+      mappedSheetColumns.add(matchedColumn);
+      logger.info(`Exact alias match: system column ${sysCol.key} -> sheet column ${matchedColumn}`);
+    }
+  });
+
+  // Step 2: Contains matches for remaining unmapped system columns
+  SYSTEM_COLUMNS.forEach((sysCol) => {
+    if (mappings[sysCol.key]) return; // already mapped
+
+    let matchedColumn = sheetColumns.find((sheetCol) => {
+      if (mappedSheetColumns.has(sheetCol)) return false;
+      const normalizedSheetCol = normalizeHeader(sheetCol);
+      return sysCol.aliases.some((alias) => {
+        const normalizedAlias = normalizeHeader(alias);
+
+        // Prevent mapping CommuterName to columns containing reference code keywords
+        if (sysCol.key === 'CommuterName' && (
+          normalizedSheetCol.includes('ref') ||
+          normalizedSheetCol.includes('code') ||
+          normalizedSheetCol.includes('id') ||
+          normalizedSheetCol.includes('number') ||
+          normalizedSheetCol.includes('no')
+        )) {
+          return false;
+        }
+
+        return normalizedSheetCol.includes(normalizedAlias);
+      });
+    });
+
+    // Step 3: Pattern matching fallback
     if (!matchedColumn && sysCol.pattern && sampleRows.length > 0) {
       for (const sheetCol of sheetColumns) {
-        // Test first few rows of data
+        if (mappedSheetColumns.has(sheetCol)) continue;
         const samples = sampleRows.slice(0, 10).map(r => String(r[sheetCol] || '').trim()).filter(Boolean);
         if (samples.length > 0) {
           const matchCount = samples.filter(val => sysCol.pattern!.test(val)).length;
-          // If > 70% match data pattern, assign mapping
           if (matchCount / samples.length >= 0.7) {
             matchedColumn = sheetCol;
             logger.info(`Pattern match succeeded for system column ${sysCol.key} -> sheet column ${sheetCol}`);
@@ -100,8 +132,9 @@ export const detectColumnMappings = (
 
     if (matchedColumn) {
       mappings[sysCol.key] = matchedColumn;
+      mappedSheetColumns.add(matchedColumn);
     } else {
-      mappings[sysCol.key] = ''; // unmapped initially
+      mappings[sysCol.key] = ''; // unmapped
     }
   });
 

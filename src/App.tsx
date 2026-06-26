@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Terminal,
   Check,
+  Settings,
 } from 'lucide-react';
 
 import { useTheme } from './context/ThemeContext';
@@ -90,6 +91,12 @@ function App() {
   const [routeSheetBuffer, setRouteSheetBuffer] = useState<ArrayBuffer | null>(null);
   const [errorReportBuffer, setErrorReportBuffer] = useState<ArrayBuffer | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+
+  // Auto-generation configurations
+  const [autoGenerateStops, setAutoGenerateStops] = useState<boolean>(true);
+  const [autoGenerateTimes, setAutoGenerateTimes] = useState<boolean>(true);
+  const [tripStartTime, setTripStartTime] = useState<string>('08:00');
+  const [tripEndTime, setTripEndTime] = useState<string>('09:00');
 
   // Cache to track the last run configuration and prevent duplicate processing
   const [lastRunConfig, setLastRunConfig] = useState<{
@@ -394,6 +401,12 @@ function App() {
       const result = await ExcelHelper.compareFiles(
         masterMappings,
         routeMappings,
+        {
+          autoGenerateStops,
+          autoGenerateTimes,
+          tripStartTime,
+          tripEndTime,
+        },
         (progress) => {
           setMatchingProgress(progress);
         }
@@ -530,6 +543,76 @@ function App() {
           />
 
         </section>
+
+        {/* Trip & Generation Settings panel */}
+        {isBothFilesUploaded && (
+          <section className="glass-panel animate-fade-in" style={settingsPanelStyle}>
+            <h3 style={settingsTitleStyle}>
+              <Settings size={18} color="var(--primary)" style={{ marginRight: '8px' }} />
+              Trip & Generation Settings
+            </h3>
+            
+            <div style={settingsGridContainerStyle}>
+              <div style={settingsGroupStyle}>
+                <span style={settingsLabelStyle}>Stop Number Options</span>
+                <div style={checkboxWrapperStyle}>
+                  <input
+                    type="checkbox"
+                    id="auto-generate-stops-check"
+                    checked={autoGenerateStops}
+                    onChange={(e) => setAutoGenerateStops(e.target.checked)}
+                    style={checkboxStyle}
+                  />
+                  <label htmlFor="auto-generate-stops-check" style={checkboxLabelStyle}>
+                    Auto-generate Stop Numbers sequentially if missing
+                  </label>
+                </div>
+              </div>
+
+              <div style={settingsGroupStyle}>
+                <span style={settingsLabelStyle}>Reporting Time Options</span>
+                <div style={checkboxWrapperStyle}>
+                  <input
+                    type="checkbox"
+                    id="auto-generate-times-check"
+                    checked={autoGenerateTimes}
+                    onChange={(e) => setAutoGenerateTimes(e.target.checked)}
+                    style={checkboxStyle}
+                  />
+                  <label htmlFor="auto-generate-times-check" style={checkboxLabelStyle}>
+                    Auto-generate Reporting Times if missing
+                  </label>
+                </div>
+              </div>
+
+              <div style={settingsGroupStyle}>
+                <span style={settingsLabelStyle}>Trip Window</span>
+                <div style={timeInputsContainerStyle}>
+                  <div style={timeInputWrapperStyle}>
+                    <span style={timeInputLabelStyle}>Start:</span>
+                    <input
+                      type="time"
+                      value={tripStartTime}
+                      onChange={(e) => setTripStartTime(e.target.value)}
+                      style={timeInputStyle}
+                      className="glass-panel"
+                    />
+                  </div>
+                  <div style={timeInputWrapperStyle}>
+                    <span style={timeInputLabelStyle}>End:</span>
+                    <input
+                      type="time"
+                      value={tripEndTime}
+                      onChange={(e) => setTripEndTime(e.target.value)}
+                      style={timeInputStyle}
+                      className="glass-panel"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Trigger Button Section */}
         <section style={triggerButtonStyleContainer}>
@@ -1231,6 +1314,96 @@ const successDoneButtonStyle: React.CSSProperties = {
   boxShadow: '0 4px 12px var(--success-glow)',
   transition: 'background-color 0.2s',
   width: '100%',
+};
+
+const settingsPanelStyle: React.CSSProperties = {
+  maxWidth: '960px',
+  width: '100%',
+  margin: '0 auto 32px auto',
+  padding: '24px',
+  borderRadius: 'var(--radius-lg)',
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border-color)',
+};
+
+const settingsTitleStyle: React.CSSProperties = {
+  fontSize: '1.1rem',
+  fontWeight: 700,
+  marginBottom: '20px',
+  color: 'var(--text-primary)',
+  display: 'flex',
+  alignItems: 'center',
+  borderBottom: '1px solid var(--border-color)',
+  paddingBottom: '8px',
+};
+
+const settingsGridContainerStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+  gap: '24px',
+};
+
+const settingsGroupStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  textAlign: 'left',
+};
+
+const settingsLabelStyle: React.CSSProperties = {
+  fontSize: '0.85rem',
+  fontWeight: 600,
+  color: 'var(--text-primary)',
+  marginBottom: '10px',
+};
+
+const checkboxWrapperStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  cursor: 'pointer',
+  minHeight: '36px',
+};
+
+const checkboxStyle: React.CSSProperties = {
+  width: '18px',
+  height: '18px',
+  borderRadius: '4px',
+  border: '1px solid var(--border-color)',
+  cursor: 'pointer',
+};
+
+const checkboxLabelStyle: React.CSSProperties = {
+  fontSize: '0.85rem',
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  userSelect: 'none',
+};
+
+const timeInputsContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '16px',
+};
+
+const timeInputWrapperStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+};
+
+const timeInputLabelStyle: React.CSSProperties = {
+  fontSize: '0.8rem',
+  color: 'var(--text-secondary)',
+};
+
+const timeInputStyle: React.CSSProperties = {
+  background: 'var(--bg-surface-elevated)',
+  border: '1px solid var(--border-color)',
+  borderRadius: '6px',
+  color: 'var(--text-primary)',
+  padding: '6px 12px',
+  fontSize: '0.9rem',
+  outline: 'none',
+  width: '100px',
 };
 
 const sectionBlockStyle: React.CSSProperties = {

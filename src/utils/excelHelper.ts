@@ -113,6 +113,12 @@ export class ExcelHelper {
   static compareFiles(
     masterMappings: Record<string, string>,
     routeMappings: Record<string, string>,
+    settings: {
+      autoGenerateStops: boolean;
+      autoGenerateTimes: boolean;
+      tripStartTime: string;
+      tripEndTime: string;
+    },
     onProgress?: (percentage: number) => void
   ): Promise<{
     metrics: {
@@ -131,7 +137,7 @@ export class ExcelHelper {
     comparisonLogs: string[];
   }> {
     this.progressCallback = onProgress || null;
-    return this.sendRequest('COMPARE_FILES', { masterMappings, routeMappings });
+    return this.sendRequest('COMPARE_FILES', { masterMappings, routeMappings, settings });
   }
 
   /**
